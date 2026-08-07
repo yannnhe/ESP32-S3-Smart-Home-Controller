@@ -1,0 +1,78 @@
+# 本文件会在 idf.py menuconfig 中增加一个顶层网络配置菜单。
+# 配置结果会写入 sdkconfig，并生成对应的 CONFIG_NETWORK_* 宏。
+menu "Network Service Configuration"
+
+    config NETWORK_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            要连接的无线接入点名称。请通过 idf.py menuconfig 设置。
+            如果保持为空，network_init() 会拒绝启动网络服务。
+
+    config NETWORK_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            无线接入点密码。network 组件不会在任何日志中输出该密码。
+
+    config NETWORK_WIFI_CONNECT_TIMEOUT_MS
+        int "Initial connection timeout (ms)"
+        default 15000
+        range 1000 120000
+        help
+            app_main 首次等待联网的最长时间。即使等待超时，
+            network 组件仍会在后台继续尝试连接。
+
+    config NETWORK_WIFI_RECONNECT_MAX_BACKOFF_MS
+        int "Maximum reconnect backoff (ms)"
+        default 30000
+        range 1000 300000
+        help
+            断线重连从 1 秒开始，每次失败后等待时间翻倍，
+            直到达到此上限。
+
+    choice NETWORK_WIFI_AUTH_MODE_THRESHOLD
+        prompt "Minimum accepted Wi-Fi authentication mode"
+        default NETWORK_WIFI_AUTH_WPA2_PSK
+        help
+            设置设备允许连接的最低认证安全等级。
+            WPA2 选项同时允许连接 WPA2 和安全等级更高的 WPA3 网络。
+            只有明确需要拒绝 WPA2 网络时才应选择 WPA3。
+
+        config NETWORK_WIFI_AUTH_WPA2_PSK
+            bool "WPA2 PSK or stronger"
+
+        config NETWORK_WIFI_AUTH_WPA3_PSK
+            bool "WPA3 PSK"
+
+        config NETWORK_WIFI_AUTH_WPA2_WPA3_PSK
+            bool "WPA2/WPA3 transition mode"
+    endchoice
+
+    choice NETWORK_WIFI_SAE_MODE
+        prompt "WPA3 SAE PWE mode"
+        default NETWORK_WIFI_SAE_PWE_BOTH
+        help
+            配置 WPA3 SAE 的密码元素推导方式。Both 兼容性最好，
+            可同时支持传统 Hunt and Peck 与 Hash-to-Element。
+
+        config NETWORK_WIFI_SAE_PWE_HUNT_AND_PECK
+            bool "Hunt and Peck"
+
+        config NETWORK_WIFI_SAE_PWE_HASH_TO_ELEMENT
+            bool "Hash-to-Element"
+            depends on ESP_WIFI_ENABLE_SAE_H2E
+
+        config NETWORK_WIFI_SAE_PWE_BOTH
+            bool "Both"
+            depends on ESP_WIFI_ENABLE_SAE_H2E
+    endchoice
+
+    config NETWORK_WIFI_SAE_H2E_IDENTIFIER
+        string "WPA3 SAE Hash-to-Element identifier"
+        default ""
+        depends on NETWORK_WIFI_SAE_PWE_HASH_TO_ELEMENT || NETWORK_WIFI_SAE_PWE_BOTH
+        help
+            WPA3 Hash-to-Element 可选密码标识符。普通家庭网络通常留空。
+
+endmenu

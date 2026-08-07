@@ -1,0 +1,75 @@
+# ESP-IDF build output
+/build/
+**/build/
+*.bin
+*.elf
+*.map
+*.o
+*.a
+*.d
+flasher_args.json
+sdkconfig.old
+
+# Local ESP-IDF configuration. It may contain Wi-Fi credentials.
+/sdkconfig
+/sdkconfig.*
+!/sdkconfig.defaults
+!/sdkconfig.defaults.*
+
+# ESP-IDF Component Manager cache; dependencies.lock is committed instead.
+/managed_components/
+/.idf/
+/components/.idf/
+/.espressif/
+
+# IDE and language-server files with machine-specific paths
+/.vscode/
+/.clangd
+/.ccls-cache/
+compile_commands.json
+
+# Secrets and local provisioning material
+.env
+.env.*
+!.env.example
+secrets.*
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# The original ESPHome configuration contains API/OTA/AP credentials.
+# Commit only a manually sanitized *.example.yaml file if one is created.
+/yaml/esp32-1.yaml
+/yaml/secrets.yaml
+/yaml/**/secrets.yaml
+
+# CMake and test output
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+
+# Python tools
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Editor and operating-system temporary files
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
