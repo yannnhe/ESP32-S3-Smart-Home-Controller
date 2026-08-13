@@ -1,0 +1,5 @@
+dependencies:
+  # ESP-IDF 6.x 中 ESP-MQTT 以托管组件形式提供。
+  espressif/mqtt: "^1.0.0"
+  idf:
+    version: ">=5.3"

@@ -5,6 +5,7 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
+#include "ha_mqtt.h"
 #include "network.h"
 
 static const char *TAG = "main";
@@ -20,8 +21,7 @@ static const char *TAG = "main";
 static esp_err_t initialize_nvs(void)
 {
     esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES
-        || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_LOGW(TAG, "NVS requires recovery; erasing the NVS partition");
         err = nvs_flash_erase();
         if (err == ESP_OK) {
@@ -34,7 +34,7 @@ static esp_err_t initialize_nvs(void)
 /**
  * @brief 处理 network 组件发布的高级网络状态事件。
  *
- * main 只演示如何订阅事件。后续 MQTT、SNTP 和 OTA 组件可以分别注册
+ * main 只负责记录基础网络信息。ha_mqtt、后续 SNTP 和 OTA 组件会分别注册
  * 自己的处理器，而不必修改 network 组件内部代码。
  */
 static void network_event_handler(void *handler_arg,
@@ -51,10 +51,8 @@ static void network_event_handler(void *handler_arg,
         char ip_address[16];
         int8_t rssi;
 
-        if (network_get_ip(ip_address, sizeof(ip_address)) == ESP_OK
-            && network_get_rssi(&rssi) == ESP_OK) {
-            ESP_LOGI(TAG, "Network ready: IPv4=%s, RSSI=%d dBm",
-                     ip_address, rssi);
+        if (network_get_ip(ip_address, sizeof(ip_address)) == ESP_OK && network_get_rssi(&rssi) == ESP_OK) {
+            ESP_LOGI(TAG, "Network ready: IPv4=%s, RSSI=%d dBm", ip_address, rssi);
         } else {
             ESP_LOGI(TAG, "Network connected");
         }
@@ -70,9 +68,10 @@ void app_main(void)
      * 1. NVS：Wi-Fi 驱动及未来 storage 组件的持久化基础；
      * 2. esp_netif：TCP/IP 网络接口抽象层；
      * 3. 默认事件循环：Wi-Fi、IP 以及 network 自定义事件的分发基础；
-     * 4. 注册上层 network 事件监听器；
-     * 5. 初始化并启动 network 组件；
-     * 6. 有限时间等待首次联网。
+     * 4. 注册 main 的 network 事件监听器；
+     * 5. 初始化 ha_mqtt，使其提前监听 network 连接事件；
+     * 6. 初始化并启动 network 组件；
+     * 7. 有限时间等待首次联网。
      */
     esp_err_t err = initialize_nvs();
     if (err != ESP_OK) {
@@ -83,16 +82,14 @@ void app_main(void)
     /* esp_netif_init() 在整个应用生命周期中只应调用一次。 */
     err = esp_netif_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_netif initialization failed: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "esp_netif initialization failed: %s", esp_err_to_name(err));
         return;
     }
 
     /* Wi-Fi、IP 和自定义 NETWORK_EVENT 共用此默认事件循环。 */
     err = esp_event_loop_create_default();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Default event loop creation failed: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "Default event loop creation failed: %s", esp_err_to_name(err));
         return;
     }
 
@@ -103,8 +100,25 @@ void app_main(void)
         network_event_handler,
         NULL);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Network event registration failed: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "Network event registration failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    /*
+     * MQTT 组件必须在 network 启动前完成事件注册，以免漏掉首次
+     * NETWORK_EVENT_CONNECTED。若凭据尚未填写，只停用 MQTT，Wi-Fi 仍可继续启动，
+     * 方便用户通过串口独立验证 network 组件。
+     */
+    err = ha_mqtt_init();
+    if (err == ESP_ERR_INVALID_ARG
+        && (CONFIG_HA_MQTT_BROKER_URI[0] == '\0'
+            || CONFIG_HA_MQTT_USERNAME[0] == '\0'
+            || CONFIG_HA_MQTT_PASSWORD[0] == '\0')) {
+        ESP_LOGW(TAG,
+                 "MQTT is disabled because its configuration is incomplete. "
+                 "Run idf.py menuconfig and open Home Assistant MQTT Configuration.");
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "MQTT initialization failed: %s", esp_err_to_name(err));
         return;
     }
 
@@ -117,8 +131,7 @@ void app_main(void)
     if (err == ESP_ERR_INVALID_ARG && CONFIG_NETWORK_WIFI_SSID[0] == '\0') {
         ESP_LOGW(TAG,
                  "Network not started because Wi-Fi credentials are empty. "
-                 "Run idf.py menuconfig and open "
-                 "Network Service Configuration.");
+                 "Run idf.py menuconfig and open Network Service Configuration.");
         return;
     }
     if (err != ESP_OK) {
@@ -144,7 +157,6 @@ void app_main(void)
                  "Initial Wi-Fi connection timed out; "
                  "reconnection continues in the background");
     } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Waiting for network failed: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "Waiting for network failed: %s", esp_err_to_name(err));
     }
 }

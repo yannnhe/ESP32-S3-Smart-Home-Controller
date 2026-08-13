@@ -96,8 +96,7 @@ static void publish_network_event(network_event_id_t event_id)
 {
     esp_err_t err = esp_event_post(NETWORK_EVENT, event_id, NULL, 0, 0);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to publish network event %d: %s",
-                 event_id, esp_err_to_name(err));
+        ESP_LOGW(TAG, "Failed to publish network event %d: %s", event_id, esp_err_to_name(err));
     }
 }
 
@@ -112,8 +111,7 @@ static void stop_reconnect_timer(void)
     if (s_reconnect_timer != NULL) {
         esp_err_t err = esp_timer_stop(s_reconnect_timer);
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-            ESP_LOGW(TAG, "Failed to stop reconnect timer: %s",
-                     esp_err_to_name(err));
+            ESP_LOGW(TAG, "Failed to stop reconnect timer: %s", esp_err_to_name(err));
         }
     }
 }
@@ -128,9 +126,7 @@ static void stop_reconnect_timer(void)
 static void schedule_reconnect(void)
 {
     /* 主动停止期间绝不能因为断线事件再次唤起 Wi-Fi。 */
-    if (!s_started || s_stopping || s_reconnect_timer == NULL) {
-        return;
-    }
+    if (!s_started || s_stopping || s_reconnect_timer == NULL) return;
 
     /* 保证任何时刻最多只有一个待触发的重连定时器。 */
     stop_reconnect_timer();
@@ -138,8 +134,7 @@ static void schedule_reconnect(void)
     uint32_t delay_ms = s_reconnect_delay_ms;
     esp_err_t err = esp_timer_start_once(s_reconnect_timer, delay_ms * 1000ULL);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to schedule Wi-Fi reconnect: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to schedule Wi-Fi reconnect: %s", esp_err_to_name(err));
         return;
     }
 
@@ -163,9 +158,7 @@ static void reconnect_timer_callback(void *argument)
 {
     (void)argument;
 
-    if (!s_started || s_stopping || network_has_ip()) {
-        return;
-    }
+    if (!s_started || s_stopping || network_has_ip()) return;
 
     ESP_LOGI(TAG, "Attempting Wi-Fi reconnect");
     esp_err_t err = esp_wifi_connect();
@@ -223,8 +216,7 @@ static void event_handler(void *argument,
         /* 连接为异步操作，最终结果通过 GOT_IP 或 DISCONNECTED 事件返回。 */
         esp_err_t err = esp_wifi_connect();
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Initial esp_wifi_connect failed: %s",
-                     esp_err_to_name(err));
+            ESP_LOGW(TAG, "Initial esp_wifi_connect failed: %s", esp_err_to_name(err));
             schedule_reconnect();
         }
         return;
@@ -244,13 +236,10 @@ static void event_handler(void *argument,
         s_reconnect_delay_ms = NETWORK_RECONNECT_INITIAL_DELAY_MS;
         xEventGroupSetBits(s_network_event_group, NETWORK_CONNECTED_BIT);
 
-        ESP_LOGI(TAG, "Connected to SSID \"%s\", IPv4=" IPSTR,
-                 CONFIG_NETWORK_WIFI_SSID, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "Connected to SSID \"%s\", IPv4=" IPSTR, CONFIG_NETWORK_WIFI_SSID, IP2STR(&event->ip_info.ip));
 
         /* DHCP 续租可能重复产生 GOT_IP，只在状态真正变化时通知上层。 */
-        if (!was_connected) {
-            publish_network_event(NETWORK_EVENT_CONNECTED);
-        }
+        if (!was_connected) publish_network_event(NETWORK_EVENT_CONNECTED);
     }
 }
 
@@ -263,14 +252,12 @@ static void event_handler(void *argument,
 static void cleanup_failed_init(bool wifi_initialized)
 {
     if (s_ip_event_instance != NULL) {
-        esp_event_handler_instance_unregister(
-            IP_EVENT, IP_EVENT_STA_GOT_IP, s_ip_event_instance);
+        esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, s_ip_event_instance);
         s_ip_event_instance = NULL;
     }
 
     if (s_wifi_event_instance != NULL) {
-        esp_event_handler_instance_unregister(
-            WIFI_EVENT, ESP_EVENT_ANY_ID, s_wifi_event_instance);
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_wifi_event_instance);
         s_wifi_event_instance = NULL;
     }
 
@@ -300,9 +287,7 @@ static void cleanup_failed_init(bool wifi_initialized)
 esp_err_t network_init(void)
 {
     /* 允许重复调用，避免上层初始化流程意外执行两次时重复创建驱动。 */
-    if (s_initialized) {
-        return ESP_OK;
-    }
+    if (s_initialized) return ESP_OK;
 
     /* 空 SSID 是明确的配置错误，但保持系统继续运行，方便重新配置。 */
     if (CONFIG_NETWORK_WIFI_SSID[0] == '\0') {
@@ -314,9 +299,7 @@ esp_err_t network_init(void)
 
     /* Event Group 用于跨任务等待“已获得 IP”这一状态。 */
     s_network_event_group = xEventGroupCreate();
-    if (s_network_event_group == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
+    if (s_network_event_group == NULL) return ESP_ERR_NO_MEM;
 
     /* 创建默认 STA netif，并启用 ESP-IDF 默认 DHCP 客户端。 */
     s_sta_netif = esp_netif_create_default_wifi_sta();
@@ -400,12 +383,8 @@ esp_err_t network_init(void)
      * 每次启动都以当前固件 sdkconfig 中的配置为准。
      */
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    if (err == ESP_OK) {
-        err = esp_wifi_set_mode(WIFI_MODE_STA);
-    }
-    if (err == ESP_OK) {
-        err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-    }
+    if (err == ESP_OK) err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     if (err != ESP_OK) {
         cleanup_failed_init(wifi_initialized);
         return err;
@@ -416,8 +395,7 @@ esp_err_t network_init(void)
     s_stopping = false;
     s_initialized = true;
 
-    ESP_LOGI(TAG, "Wi-Fi STA service initialized for SSID \"%s\"",
-             CONFIG_NETWORK_WIFI_SSID);
+    ESP_LOGI(TAG, "Wi-Fi STA service initialized for SSID \"%s\"", CONFIG_NETWORK_WIFI_SSID);
     return ESP_OK;
 }
 
@@ -426,12 +404,8 @@ esp_err_t network_init(void)
  */
 esp_err_t network_start(void)
 {
-    if (!s_initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (s_started) {
-        return ESP_OK;
-    }
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (s_started) return ESP_OK;
 
     /* 在 esp_wifi_start() 前置位，确保 STA_START 回调可以立即发起连接。 */
     s_stopping = false;
@@ -449,8 +423,7 @@ esp_err_t network_start(void)
      */
     err = esp_wifi_set_ps(WIFI_PS_NONE);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to disable Wi-Fi power save: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to disable Wi-Fi power save: %s", esp_err_to_name(err));
         esp_wifi_stop();
         s_started = false;
         return err;
@@ -465,9 +438,7 @@ esp_err_t network_start(void)
  */
 esp_err_t network_wait_connected(uint32_t timeout_ms)
 {
-    if (!s_initialized || !s_started) {
-        return ESP_ERR_INVALID_STATE;
-    }
+    if (!s_initialized || !s_started) return ESP_ERR_INVALID_STATE;
 
     /* UINT32_MAX 作为公共 API 的“永久等待”特殊值。 */
     TickType_t timeout_ticks = timeout_ms == UINT32_MAX
@@ -497,25 +468,17 @@ bool network_is_connected(void)
  */
 esp_err_t network_get_ip(char *buffer, size_t buffer_size)
 {
-    if (buffer == NULL || buffer_size == 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!network_has_ip() || s_sta_netif == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
+    if (buffer == NULL || buffer_size == 0) return ESP_ERR_INVALID_ARG;
+    if (!network_has_ip() || s_sta_netif == NULL) return ESP_ERR_INVALID_STATE;
 
     /* 从默认 STA netif 读取 DHCP 当前分配的地址、掩码和网关。 */
     esp_netif_ip_info_t ip_info;
     esp_err_t err = esp_netif_get_ip_info(s_sta_netif, &ip_info);
-    if (err != ESP_OK) {
-        return err;
-    }
+    if (err != ESP_OK) return err;
 
     /* IPSTR/IP2STR 是 ESP-IDF 提供的 IPv4 安全格式化宏。 */
     int written = snprintf(buffer, buffer_size, IPSTR, IP2STR(&ip_info.ip));
-    if (written < 0 || (size_t)written >= buffer_size) {
-        return ESP_ERR_INVALID_SIZE;
-    }
+    if (written < 0 || (size_t)written >= buffer_size) return ESP_ERR_INVALID_SIZE;
     return ESP_OK;
 }
 
@@ -524,19 +487,13 @@ esp_err_t network_get_ip(char *buffer, size_t buffer_size)
  */
 esp_err_t network_get_rssi(int8_t *rssi)
 {
-    if (rssi == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!network_has_ip()) {
-        return ESP_ERR_INVALID_STATE;
-    }
+    if (rssi == NULL) return ESP_ERR_INVALID_ARG;
+    if (!network_has_ip()) return ESP_ERR_INVALID_STATE;
 
     /* AP 记录中还包含 BSSID、信道和认证模式，目前只向上层返回 RSSI。 */
     wifi_ap_record_t ap_info;
     esp_err_t err = esp_wifi_sta_get_ap_info(&ap_info);
-    if (err != ESP_OK) {
-        return err;
-    }
+    if (err != ESP_OK) return err;
 
     *rssi = ap_info.rssi;
     return ESP_OK;
@@ -547,9 +504,7 @@ esp_err_t network_get_rssi(int8_t *rssi)
  */
 esp_err_t network_reconnect(void)
 {
-    if (!s_initialized || !s_started) {
-        return ESP_ERR_INVALID_STATE;
-    }
+    if (!s_initialized || !s_started) return ESP_ERR_INVALID_STATE;
 
     /* 手动重连是一轮新连接过程，因此取消旧定时器并从 1 秒退避开始。 */
     stop_reconnect_timer();
@@ -565,9 +520,7 @@ esp_err_t network_reconnect(void)
 
     /* 当前未联网时先立即尝试；同步失败则退回定时重连状态机。 */
     esp_err_t err = esp_wifi_connect();
-    if (err != ESP_OK) {
-        schedule_reconnect();
-    }
+    if (err != ESP_OK) schedule_reconnect();
     return err;
 }
 
@@ -576,12 +529,8 @@ esp_err_t network_reconnect(void)
  */
 esp_err_t network_stop(void)
 {
-    if (!s_initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (!s_started) {
-        return ESP_OK;
-    }
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (!s_started) return ESP_OK;
 
     bool was_connected = network_has_ip();
 
@@ -597,9 +546,7 @@ esp_err_t network_stop(void)
     s_started = false;
 
     /* 主动停止同样会使上层网络不可用，因此补发一次状态变化事件。 */
-    if (was_connected) {
-        publish_network_event(NETWORK_EVENT_DISCONNECTED);
-    }
+    if (was_connected) publish_network_event(NETWORK_EVENT_DISCONNECTED);
 
     return err;
 }

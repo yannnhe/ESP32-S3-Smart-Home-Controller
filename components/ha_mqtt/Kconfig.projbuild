@@ -1,0 +1,31 @@
+menu "Home Assistant MQTT Configuration"
+
+    config HA_MQTT_BROKER_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.31.163:1883"
+        help
+            Mosquitto Broker 的完整 URI。当前局域网联调使用普通 MQTT 1883 端口。
+            后续切换 TLS 时应改用 mqtts:// URI，并在代码中补充服务器证书校验配置。
+
+    config HA_MQTT_USERNAME
+        string "MQTT username"
+        default ""
+        help
+            Mosquitto 登录用户名。请在 menuconfig 中填写，不要写入源代码。
+            ha_mqtt 组件不会在日志中输出该值。
+
+    config HA_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+        help
+            Mosquitto 登录密码。请在 menuconfig 中填写，不要写入源代码。
+            ha_mqtt 组件不会在任何日志中输出该值。
+
+    config HA_MQTT_KEEPALIVE_SECONDS
+        int "MQTT keep alive (seconds)"
+        default 60
+        range 15 300
+        help
+            MQTT Keep Alive 周期。当前按已确认方案使用 60 秒。
+
+endmenu
