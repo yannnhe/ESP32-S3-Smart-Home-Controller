@@ -9,7 +9,10 @@ idf_component_register(
     REQUIRES
         esp_event
         esp_netif
+        diagnostics
+        ha_discovery
         ha_mqtt
         network
         nvs_flash
+        sensors
 )

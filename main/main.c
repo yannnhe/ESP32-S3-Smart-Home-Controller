@@ -5,8 +5,11 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
+#include "diagnostics.h"
+#include "ha_discovery.h"
 #include "ha_mqtt.h"
 #include "network.h"
+#include "sensors.h"
 
 static const char *TAG = "main";
 
@@ -104,11 +107,19 @@ void app_main(void)
         return;
     }
 
-    /*
-     * MQTT 组件必须在 network 启动前完成事件注册，以免漏掉首次
-     * NETWORK_EVENT_CONNECTED。若凭据尚未填写，只停用 MQTT，Wi-Fi 仍可继续启动，
-     * 方便用户通过串口独立验证 network 组件。
-     */
+    /* network 先完成驱动和事件初始化；MQTT 仍须在 network_start() 前注册事件。 */
+    err = network_init();
+    if (err == ESP_ERR_INVALID_ARG && CONFIG_NETWORK_WIFI_SSID[0] == '\0') {
+        ESP_LOGW(TAG,
+                 "Network not started because Wi-Fi credentials are empty. "
+                 "Run idf.py menuconfig and open Network Service Configuration.");
+        return;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Network initialization failed: %s", esp_err_to_name(err));
+        return;
+    }
+
     err = ha_mqtt_init();
     if (err == ESP_ERR_INVALID_ARG
         && (CONFIG_HA_MQTT_BROKER_URI[0] == '\0'
@@ -122,21 +133,21 @@ void app_main(void)
         return;
     }
 
-    /*
-     * network_init() 遇到空 SSID 会返回 ESP_ERR_INVALID_ARG。
-     * 这里把“尚未通过 menuconfig 配置凭据”作为可恢复配置状态处理，
-     * 只记录提示并结束 app_main，不触发崩溃或重启循环。
-     */
-    err = network_init();
-    if (err == ESP_ERR_INVALID_ARG && CONFIG_NETWORK_WIFI_SSID[0] == '\0') {
-        ESP_LOGW(TAG,
-                 "Network not started because Wi-Fi credentials are empty. "
-                 "Run idf.py menuconfig and open Network Service Configuration.");
+    err = ha_discovery_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HA Discovery initialization failed: %s", esp_err_to_name(err));
         return;
     }
+
+    err = sensors_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Network initialization failed: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "Sensors initialization failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = diagnostics_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Diagnostics initialization failed: %s", esp_err_to_name(err));
         return;
     }
 
