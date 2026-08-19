@@ -39,6 +39,76 @@ dependencies:
     - esp32s2
     - esp32s3
     version: 1.4.0
+  espp/adc:
+    component_hash: 4c66a0424b1d06ae1f6d5286719e2ea2af518f8b5f34d249da1665310855e2a9
+    dependencies:
+    - name: espp/base_component
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: espp/task
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.1.8
+  espp/base_component:
+    component_hash: bf0ae988a3c2899e09207ecc278619ede7811af0e3628ee957893c643ee97f95
+    dependencies:
+    - name: espp/logger
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.8
+  espp/format:
+    component_hash: 2e56a327f5a5dcc34768a4b0dfd5f97db746826f302217cae8091233598092fe
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.8
+  espp/logger:
+    component_hash: 4d7ddd30b22b5f77570853456b5a786715ca54bb23324152fce84254b6a9c6ef
+    dependencies:
+    - name: espp/format
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.8
+  espp/task:
+    component_hash: abefb41c2341680c630e5e3b6ec8be26866b98ca4f190f0257ee9dbd64d64dc7
+    dependencies:
+    - name: espp/base_component
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.8
   espressif/mqtt:
     component_hash: fb18bc3b65aa8c94693a9811ffc322cca8a65d92d5ec84983d3e385080e3969c
     dependencies:
@@ -55,8 +125,9 @@ dependencies:
     version: 6.0.2
 direct_dependencies:
 - esp-idf-lib/dht
+- espp/adc
 - espressif/mqtt
 - idf
-manifest_hash: 755afe400ecbef0cd64ed6e63e9be18a6da5fa687836137bf05ab0fec642432f
+manifest_hash: 1ae9bb7c5f8b4ac400c430d411ea39dcf0f3da8b416efed8973d73755f733908
 target: esp32s3
 version: 3.0.0

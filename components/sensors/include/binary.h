@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-esp_err_t sensors_init(void);
+esp_err_t binary_init(void);
 
 #ifdef __cplusplus
 }

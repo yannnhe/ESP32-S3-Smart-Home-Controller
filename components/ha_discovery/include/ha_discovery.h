@@ -33,8 +33,8 @@ typedef struct {
 typedef struct {
     const char *entity_key;
     const char *name;
-    const char *device_class;
-    const char *unit_of_measurement;
+    const char *device_class;        /**< 可为 NULL，省略 device_class。 */
+    const char *unit_of_measurement; /**< 可为 NULL，省略单位。 */
     const char *entity_category;
     const char *value_template;
     ha_discovery_state_group_handle_t state_group;
@@ -43,6 +43,18 @@ typedef struct {
 
 typedef size_t ha_discovery_sensor_handle_t;
 #define HA_DISCOVERY_INVALID_HANDLE ((ha_discovery_sensor_handle_t)-1)
+
+/** 一个 Home Assistant MQTT Binary Sensor 实体的静态描述。 */
+typedef struct {
+    const char *entity_key;
+    const char *name;
+    const char *device_class; /**< 可为 NULL，省略 device_class。 */
+    ha_discovery_state_group_handle_t state_group;
+    bool include_full_device_info;
+} ha_discovery_binary_sensor_config_t;
+
+typedef size_t ha_discovery_binary_sensor_handle_t;
+#define HA_DISCOVERY_INVALID_BINARY_SENSOR_HANDLE ((ha_discovery_binary_sensor_handle_t)-1)
 
 /** @brief 初始化 Discovery 注册表、MQTT/HA 事件监听和专用发布任务。 */
 esp_err_t ha_discovery_init(void);
@@ -54,6 +66,10 @@ esp_err_t ha_discovery_register_state_group(const ha_discovery_state_group_confi
 /** @brief 注册一个引用已注册状态组的 MQTT Sensor Discovery 实体。 */
 esp_err_t ha_discovery_register_sensor(const ha_discovery_sensor_config_t *config,
                                        ha_discovery_sensor_handle_t *handle);
+
+/** @brief 注册一个引用已注册状态组的 MQTT Binary Sensor Discovery 实体。 */
+esp_err_t ha_discovery_register_binary_sensor(const ha_discovery_binary_sensor_config_t *config,
+                                              ha_discovery_binary_sensor_handle_t *handle);
 
 /**
  * @brief 请求异步发布一个状态组的 retained 当前状态。

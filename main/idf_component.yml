@@ -16,3 +16,4 @@ dependencies:
   #   public: true
   esp-idf-lib/dht: ^1.2.0
   espressif/mqtt: ^1.1.0
+  espp/adc: ^1.1.8
