@@ -17,16 +17,18 @@
 #define HA_DISCOVERY_MAX_SENSORS        32
 #define HA_DISCOVERY_MAX_BINARY_SENSORS 16
 #define HA_DISCOVERY_MAX_LIGHTS          16
+#define HA_DISCOVERY_MAX_SWITCHES        16
 #define HA_DISCOVERY_MAX_STATE_GROUPS   32
 /* 专用发布任务的 FreeRTOS 栈大小（字节）与工作队列最大长度。 */
 #define HA_DISCOVERY_TASK_STACK_SIZE    6144
-#define HA_DISCOVERY_WORK_QUEUE_LENGTH  (HA_DISCOVERY_MAX_SENSORS + HA_DISCOVERY_MAX_BINARY_SENSORS + HA_DISCOVERY_MAX_LIGHTS + HA_DISCOVERY_MAX_STATE_GROUPS)
+#define HA_DISCOVERY_WORK_QUEUE_LENGTH  (HA_DISCOVERY_MAX_SENSORS + HA_DISCOVERY_MAX_BINARY_SENSORS + HA_DISCOVERY_MAX_LIGHTS + HA_DISCOVERY_MAX_SWITCHES + HA_DISCOVERY_MAX_STATE_GROUPS)
 /* 所有 Discovery 与状态消息均为 retained QoS 1。 */
 #define MQTT_QOS                        1
 /* Home Assistant Discovery 根主题，以及本设备的状态/在线主题。 */
 #define MQTT_SENSOR_DISCOVERY_PREFIX    "homeassistant/sensor"
 #define MQTT_BINARY_SENSOR_DISCOVERY_PREFIX "homeassistant/binary_sensor"
 #define MQTT_LIGHT_DISCOVERY_PREFIX     "homeassistant/light"
+#define MQTT_SWITCH_DISCOVERY_PREFIX    "homeassistant/switch"
 #define MQTT_STATE_PREFIX               "smarthome/esp32-1"
 #define MQTT_AVAILABILITY_TOPIC         MQTT_STATE_PREFIX "/status"
 
@@ -55,11 +57,18 @@ typedef struct {
     ha_discovery_light_config_t config; /**< 实体静态配置。 */
 } registered_light_t;
 
+/** 已注册的 MQTT Switch Discovery 实体。 */
+typedef struct {
+    bool in_use; /**< 此槽位是否已注册。 */
+    ha_discovery_switch_config_t config; /**< 实体静态配置。 */
+} registered_switch_t;
+
 /** 发布任务可处理的三类异步工作。 */
 typedef enum {
     HA_DISCOVERY_WORK_PUBLISH_SENSOR,        /**< 发布数值 Sensor Discovery JSON。 */
     HA_DISCOVERY_WORK_PUBLISH_BINARY_SENSOR, /**< 发布 Binary Sensor Discovery JSON。 */
     HA_DISCOVERY_WORK_PUBLISH_LIGHT,         /**< 发布 MQTT Light Discovery JSON。 */
+    HA_DISCOVERY_WORK_PUBLISH_SWITCH,        /**< 发布 MQTT Switch Discovery JSON。 */
     HA_DISCOVERY_WORK_PUBLISH_STATE_GROUP,   /**< 编码并发布某状态组的最新缓存值。 */
 } ha_discovery_work_type_t;
 
@@ -74,6 +83,7 @@ static registered_state_group_t s_state_groups[HA_DISCOVERY_MAX_STATE_GROUPS]; /
 static registered_sensor_t s_sensors[HA_DISCOVERY_MAX_SENSORS]; /**< 数值 Sensor 注册表。 */
 static registered_binary_sensor_t s_binary_sensors[HA_DISCOVERY_MAX_BINARY_SENSORS]; /**< 二值实体注册表。 */
 static registered_light_t s_lights[HA_DISCOVERY_MAX_LIGHTS]; /**< Light 实体注册表。 */
+static registered_switch_t s_switches[HA_DISCOVERY_MAX_SWITCHES]; /**< Switch 实体注册表。 */
 static QueueHandle_t s_work_queue; /**< 发布任务消费的工作队列。 */
 static SemaphoreHandle_t s_work_mutex; /**< 保护队列去重标志与完整同步计数。 */
 static TaskHandle_t s_worker_task; /**< 专用 Discovery/MQTT 发布任务句柄。 */
@@ -174,6 +184,30 @@ static esp_err_t build_light_topics(const ha_discovery_light_config_t *config,
 
     written = snprintf(discovery_topic, discovery_topic_size, "%s/%s/config",
                        MQTT_LIGHT_DISCOVERY_PREFIX, unique_id);
+    if (written < 0 || (size_t)written >= discovery_topic_size) return ESP_ERR_INVALID_SIZE;
+
+    written = snprintf(command_topic, command_topic_size, "%s/%s/set", MQTT_STATE_PREFIX,
+                       config->command_key);
+    if (written < 0 || (size_t)written >= command_topic_size) return ESP_ERR_INVALID_SIZE;
+
+    return build_state_topic(config->state_group, state_topic, state_topic_size);
+}
+
+/** 为 MQTT Switch 生成 unique_id、Discovery topic、状态 topic 和命令 topic。 */
+static esp_err_t build_switch_topics(const ha_discovery_switch_config_t *config,
+                                     char *discovery_topic, size_t discovery_topic_size,
+                                     char *state_topic, size_t state_topic_size,
+                                     char *command_topic, size_t command_topic_size,
+                                     char *unique_id, size_t unique_id_size)
+{
+    char normalized_key[64];
+    normalize_key(normalized_key, sizeof(normalized_key), config->entity_key);
+
+    int written = snprintf(unique_id, unique_id_size, "esp32_1_%s", normalized_key);
+    if (written < 0 || (size_t)written >= unique_id_size) return ESP_ERR_INVALID_SIZE;
+
+    written = snprintf(discovery_topic, discovery_topic_size, "%s/%s/config",
+                       MQTT_SWITCH_DISCOVERY_PREFIX, unique_id);
     if (written < 0 || (size_t)written >= discovery_topic_size) return ESP_ERR_INVALID_SIZE;
 
     written = snprintf(command_topic, command_topic_size, "%s/%s/set", MQTT_STATE_PREFIX,
@@ -324,6 +358,43 @@ static esp_err_t publish_light_discovery_now(ha_discovery_light_handle_t handle)
     return err;
 }
 
+/** 仅由发布任务调用：构造并发布一个 MQTT Switch 的 Discovery JSON。 */
+static esp_err_t publish_switch_discovery_now(ha_discovery_switch_handle_t handle)
+{
+    if (handle >= HA_DISCOVERY_MAX_SWITCHES || !s_switches[handle].in_use) return ESP_ERR_NOT_FOUND;
+
+    const ha_discovery_switch_config_t *config = &s_switches[handle].config;
+    char discovery_topic[160];
+    char state_topic[160];
+    char command_topic[160];
+    char unique_id[96];
+    char device[320];
+    char payload[1024];
+
+    esp_err_t err = build_switch_topics(config, discovery_topic, sizeof(discovery_topic),
+                                         state_topic, sizeof(state_topic), command_topic,
+                                         sizeof(command_topic), unique_id, sizeof(unique_id));
+    if (err != ESP_OK) return err;
+
+    if (config->include_full_device_info) {
+        snprintf(device, sizeof(device),
+                 "{\"identifiers\":[\"esp32-1\"],\"name\":\"ESP32-1\","
+                 "\"manufacturer\":\"Espressif\",\"model\":\"ESP32-S3\","
+                 "\"sw_version\":\"ESP-IDF 6.0.2\"}");
+    } else snprintf(device, sizeof(device), "{\"identifiers\":[\"esp32-1\"]}");
+
+    int written = snprintf(payload, sizeof(payload),
+        "{\"name\":\"%s\",\"unique_id\":\"%s\",\"command_topic\":\"%s\","
+        "\"state_topic\":\"%s\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\","
+        "\"availability_topic\":\"%s\",\"device\":%s}",
+        config->name, unique_id, command_topic, state_topic, MQTT_AVAILABILITY_TOPIC, device);
+    if (written < 0 || (size_t)written >= sizeof(payload)) return ESP_ERR_INVALID_SIZE;
+
+    err = publish_text(discovery_topic, payload);
+    log_publish_failure("switch discovery", err);
+    return err;
+}
+
 /**
  * 仅由发布任务调用：读取业务组件缓存、编码状态并发布。
  * 编码器返回 ESP_ERR_INVALID_STATE 时统一发送 unavailable。
@@ -385,6 +456,9 @@ static void publish_all_registered(void)
     for (ha_discovery_light_handle_t i = 0; i < HA_DISCOVERY_MAX_LIGHTS; ++i) {
         if (s_lights[i].in_use) publish_light_discovery_now(i);
     }
+    for (ha_discovery_switch_handle_t i = 0; i < HA_DISCOVERY_MAX_SWITCHES; ++i) {
+        if (s_switches[i].in_use) publish_switch_discovery_now(i);
+    }
     for (ha_discovery_state_group_handle_t i = 0; i < HA_DISCOVERY_MAX_STATE_GROUPS; ++i) {
         if (s_state_groups[i].in_use) publish_state_group_now(i);
     }
@@ -416,6 +490,8 @@ static void ha_discovery_worker_task(void *argument)
                 if (ha_mqtt_is_connected()) publish_binary_sensor_discovery_now(work.handle);
             } else if (work.type == HA_DISCOVERY_WORK_PUBLISH_LIGHT) {
                 if (ha_mqtt_is_connected()) publish_light_discovery_now(work.handle);
+            } else if (work.type == HA_DISCOVERY_WORK_PUBLISH_SWITCH) {
+                if (ha_mqtt_is_connected()) publish_switch_discovery_now(work.handle);
             } else if (work.type == HA_DISCOVERY_WORK_PUBLISH_STATE_GROUP) {
                 /* Clear before encoding so an update during publishing schedules another send. */
                 clear_state_publish_pending(work.handle);
@@ -432,6 +508,23 @@ static esp_err_t enqueue_light_discovery(ha_discovery_light_handle_t handle)
 
     const ha_discovery_work_item_t work = {
         .type = HA_DISCOVERY_WORK_PUBLISH_LIGHT,
+        .handle = handle,
+    };
+    if (xQueueSend(s_work_queue, &work, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Discovery work queue is full");
+        return ESP_ERR_NO_MEM;
+    }
+    xTaskNotifyGive(s_worker_task);
+    return ESP_OK;
+}
+
+/** 将 MQTT Switch Discovery 发布请求放入队列并唤醒发布任务。 */
+static esp_err_t enqueue_switch_discovery(ha_discovery_switch_handle_t handle)
+{
+    if (s_work_queue == NULL || s_worker_task == NULL) return ESP_ERR_INVALID_STATE;
+
+    const ha_discovery_work_item_t work = {
+        .type = HA_DISCOVERY_WORK_PUBLISH_SWITCH,
         .handle = handle,
     };
     if (xQueueSend(s_work_queue, &work, 0) != pdTRUE) {
@@ -626,6 +719,29 @@ esp_err_t ha_discovery_register_light(const ha_discovery_light_config_t *config,
             s_lights[i].in_use = true;
             *handle = i;
             if (ha_mqtt_is_connected()) return enqueue_light_discovery(i);
+            return ESP_OK;
+        }
+    }
+
+    return ESP_ERR_NO_MEM;
+}
+
+/** 在注册表中分配一个 MQTT Switch；若 MQTT 已连接则异步发布其 Discovery JSON。 */
+esp_err_t ha_discovery_register_switch(const ha_discovery_switch_config_t *config,
+                                       ha_discovery_switch_handle_t *handle)
+{
+    if (!s_initialized || config == NULL || handle == NULL || config->entity_key == NULL
+        || config->entity_key[0] == '\0' || config->name == NULL || config->command_key == NULL
+        || config->command_key[0] == '\0' || !is_valid_state_group_handle(config->state_group)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    for (ha_discovery_switch_handle_t i = 0; i < HA_DISCOVERY_MAX_SWITCHES; ++i) {
+        if (!s_switches[i].in_use) {
+            s_switches[i].config = *config;
+            s_switches[i].in_use = true;
+            *handle = i;
+            if (ha_mqtt_is_connected()) return enqueue_switch_discovery(i);
             return ESP_OK;
         }
     }

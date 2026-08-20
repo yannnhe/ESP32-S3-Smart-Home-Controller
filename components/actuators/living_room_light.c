@@ -20,48 +20,60 @@
 #include "ha_discovery.h"
 #include "ha_mqtt.h"
 
-#define LIVING_ROOM_LIGHT_GPIO               GPIO_NUM_11 /**< WS2812B 数据输出 GPIO。 */
-#define LIVING_ROOM_BUTTON_GPIO              GPIO_NUM_14 /**< 本地按键输入 GPIO。 */
-#define LIVING_ROOM_LIGHT_LED_COUNT          43 /**< 灯带中的 WS2812B 总数。 */
-#define LIVING_ROOM_BUTTON_DEBOUNCE_MS       50U /**< 按键按下后的软件去抖时间。 */
-#define LIVING_ROOM_DEFAULT_BRIGHTNESS       128U /**< 首次开启灯带时使用的默认亮度（0–255）。 */
-#define LIVING_ROOM_LIGHT_QUEUE_LENGTH       8 /**< 各输入源共用的命令队列长度。 */
-#define LIVING_ROOM_LIGHT_COMMAND_TOPIC      "smarthome/esp32-1/light/living-room/set" /**< HA 下发控制命令的 MQTT 主题。 */
+#define LIVING_ROOM_LIGHT_GPIO               GPIO_NUM_11
+#define LIVING_ROOM_BUTTON_GPIO              GPIO_NUM_14
+#define LIVING_ROOM_LIGHT_LED_COUNT          43 // 灯带 LED 总数
+#define LIVING_ROOM_BUTTON_DEBOUNCE_MS       50U // 软件去抖时间
+#define LIVING_ROOM_DEFAULT_BRIGHTNESS       128U // 首次开启灯带时使用的默认亮度
+#define LIVING_ROOM_LIGHT_QUEUE_LENGTH       8
+#define LIVING_ROOM_LIGHT_COMMAND_TOPIC      "smarthome/esp32-1/light/living-room/set"
+#define LIVING_ROOM_KNOB_TAKEOVER_THRESHOLD_PERCENT 1.0f
 
 /** 灯带执行任务可处理的两类内部命令。 */
 typedef enum {
-    LIVING_ROOM_LIGHT_COMMAND_TOGGLE, /**< 反转当前开关状态。 */
-    LIVING_ROOM_LIGHT_COMMAND_SET, /**< 设置指定开关状态和/或亮度。 */
+    LIVING_ROOM_LIGHT_COMMAND_TOGGLE,
+    LIVING_ROOM_LIGHT_COMMAND_SET,
 } living_room_light_command_type_t;
+
+/** 命令来源决定是否刷新旋钮基准，或是否需要校验旋钮命令版本。 */
+typedef enum {
+    LIVING_ROOM_LIGHT_COMMAND_SOURCE_MQTT,
+    LIVING_ROOM_LIGHT_COMMAND_SOURCE_BUTTON,
+    LIVING_ROOM_LIGHT_COMMAND_SOURCE_KNOB,
+} living_room_light_command_source_t;
 
 /** 由 HA、按键或旋钮投递给灯带执行任务的一条命令。 */
 typedef struct {
-    living_room_light_command_type_t type; /**< 命令类型。 */
-    bool has_state; /**< 是否携带 is_on 字段。 */
-    bool is_on; /**< 期望的开关状态。 */
-    bool has_brightness; /**< 是否携带 brightness 字段。 */
-    uint8_t brightness; /**< 期望亮度，范围为 0–255。 */
+    living_room_light_command_type_t type;
+    living_room_light_command_source_t source;
+    bool has_state; // 是否携带 is_on 字段
+    bool is_on;
+    bool has_brightness; // 是否携带 brightness 字段
+    uint8_t brightness;
+    uint32_t knob_generation; // 旋钮命令入队时的基准版本；仅旋钮命令使用
 } living_room_light_command_t;
 
 /** 灯带实际已成功写入硬件、可安全回传给 HA 的状态缓存。 */
 typedef struct {
-    bool is_on; /**< 当前实际开关状态。 */
-    uint8_t brightness; /**< 当前逻辑亮度，范围为 0–255。 */
-    uint8_t last_nonzero_brightness; /**< 最近一次非零亮度，供重新打开时恢复。 */
+    bool is_on;
+    uint8_t brightness;
+    uint8_t last_nonzero_brightness;
 } living_room_light_state_t;
 
-static const char *TAG = "living_room_light"; /**< 本组件的日志标签。 */
-static led_strip_handle_t s_led_strip; /**< RMT WS2812B 灯带驱动句柄。 */
-static QueueHandle_t s_command_queue; /**< 汇集 HA、按键、旋钮命令的 FreeRTOS 队列。 */
-static TaskHandle_t s_light_task; /**< 串行执行所有灯带命令的任务句柄。 */
-static TaskHandle_t s_button_task; /**< 负责按键去抖与释放等待的任务句柄。 */
-static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED; /**< 保护 s_state 与旋钮基线标志的临界区锁。 */
-static living_room_light_state_t s_state = { /**< 当前已实际写入灯带的状态缓存。 */
-    .is_on = false, /**< 上电默认关闭。 */
-    .brightness = LIVING_ROOM_DEFAULT_BRIGHTNESS, /**< 关闭前预置默认亮度。 */
-    .last_nonzero_brightness = LIVING_ROOM_DEFAULT_BRIGHTNESS, /**< 首次打开时可恢复的亮度。 */
+static const char *TAG = "living_room_light";
+static led_strip_handle_t s_led_strip;
+static QueueHandle_t s_command_queue;
+static TaskHandle_t s_light_task;
+static TaskHandle_t s_button_task;
+static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
+static living_room_light_state_t s_state = {
+    .is_on = false,
+    .brightness = LIVING_ROOM_DEFAULT_BRIGHTNESS,
+    .last_nonzero_brightness = LIVING_ROOM_DEFAULT_BRIGHTNESS,
 };
-static bool s_knob_baselined; /**< 是否已忽略旋钮启动时的初始位置。 */
+static bool s_knob_baselined; /**< 当前是否已有旋钮基准值。 */
+static float s_knob_reference_percent; /**< HA 成功命令或上次有效旋钮操作时记录的旋钮百分比。 */
+static uint32_t s_knob_generation; /**< 每次 HA 命令成功后递增，用于使已排队的旧旋钮命令失效。 */
 static bool s_initialized; /**< 是否已完成本组件初始化，防止重复创建资源。 */
 static ha_discovery_state_group_handle_t s_state_group = HA_DISCOVERY_INVALID_STATE_GROUP_HANDLE; /**< 灯带 MQTT 状态组句柄。 */
 
@@ -110,11 +122,34 @@ static void publish_current_state(void)
 }
 
 /**
+ * 在 HA 命令实际写入灯带后，以当前 ADC 缓存重新建立旋钮基准。
+ * 同时递增版本号，使此前已入队的旋钮命令不能覆盖刚成功的 HA 命令。
+ */
+static void refresh_knob_reference_after_mqtt_command(void)
+{
+    float percent;
+    const bool has_valid_knob_value = adc_get_knob_percent(&percent) == ESP_OK;
+
+    portENTER_CRITICAL(&s_state_lock);
+    ++s_knob_generation;
+    s_knob_baselined = has_valid_knob_value;
+    if (has_valid_knob_value) s_knob_reference_percent = percent;
+    portEXIT_CRITICAL(&s_state_lock);
+}
+
+/**
  * 在灯带执行任务中应用一条命令；硬件刷新成功后才提交缓存并回传 HA。
  * @param command 已从命令队列取出的控制命令。
  */
 static void apply_command(const living_room_light_command_t *command)
 {
+    if (command->source == LIVING_ROOM_LIGHT_COMMAND_SOURCE_KNOB) {
+        portENTER_CRITICAL(&s_state_lock);
+        const bool is_current_knob_command = command->knob_generation == s_knob_generation;
+        portEXIT_CRITICAL(&s_state_lock);
+        if (!is_current_knob_command) return;
+    }
+
     portENTER_CRITICAL(&s_state_lock);
     living_room_light_state_t target = s_state; /**< 基于当前缓存计算出的目标状态副本。 */
     portEXIT_CRITICAL(&s_state_lock);
@@ -136,6 +171,10 @@ static void apply_command(const living_room_light_command_t *command)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "WS2812 output update failed: %s", esp_err_to_name(err));
         return;
+    }
+
+    if (command->source == LIVING_ROOM_LIGHT_COMMAND_SOURCE_MQTT) {
+        refresh_knob_reference_after_mqtt_command();
     }
 
     portENTER_CRITICAL(&s_state_lock);
@@ -177,6 +216,7 @@ static esp_err_t handle_mqtt_command(const char *payload, size_t payload_length,
     (void)context;
     living_room_light_command_t command = { /**< 由 MQTT 载荷解析出的内部命令。 */
         .type = LIVING_ROOM_LIGHT_COMMAND_SET,
+        .source = LIVING_ROOM_LIGHT_COMMAND_SOURCE_MQTT,
     };
 
     if (payload_equals(payload, payload_length, "ON")) {
@@ -256,6 +296,7 @@ static void button_task(void *argument)
 
         const living_room_light_command_t command = { /**< 已去抖确认后的本地切换命令。 */
             .type = LIVING_ROOM_LIGHT_COMMAND_TOGGLE,
+            .source = LIVING_ROOM_LIGHT_COMMAND_SOURCE_BUTTON,
         };
         esp_err_t err = enqueue_command(&command); /**< 本地按键命令的入队结果。 */
         if (err != ESP_OK) ESP_LOGW(TAG, "Local button command dropped: %s", esp_err_to_name(err));
@@ -276,25 +317,35 @@ static void IRAM_ATTR button_gpio_isr(void *argument)
 }
 
 /**
- * GPIO1 旋钮监听回调：忽略首次基线值，后续将百分比映射为灯带开关和亮度命令。
+ * GPIO1 旋钮监听回调：仅相对当前基准变化达到阈值时，才重新接管灯带。
  * @param percent ADC 组件提供的旋钮百分比。
  * @param context 未使用的监听器上下文。
  */
 static void knob_listener(float percent, void *context)
 {
     (void)context;
+    uint32_t knob_generation;
     portENTER_CRITICAL(&s_state_lock);
     if (!s_knob_baselined) {
+        s_knob_reference_percent = percent;
         s_knob_baselined = true;
         portEXIT_CRITICAL(&s_state_lock);
         return;
     }
+    if (fabsf(percent - s_knob_reference_percent) < LIVING_ROOM_KNOB_TAKEOVER_THRESHOLD_PERCENT) {
+        portEXIT_CRITICAL(&s_state_lock);
+        return;
+    }
+    s_knob_reference_percent = percent;
+    knob_generation = s_knob_generation;
     portEXIT_CRITICAL(&s_state_lock);
 
     living_room_light_command_t command = { /**< 由旋钮百分比换算出的灯带设置命令。 */
         .type = LIVING_ROOM_LIGHT_COMMAND_SET,
+        .source = LIVING_ROOM_LIGHT_COMMAND_SOURCE_KNOB,
+        .knob_generation = knob_generation,
         .has_state = true,
-        .is_on = percent > 1.0f,
+        .is_on = percent > LIVING_ROOM_KNOB_TAKEOVER_THRESHOLD_PERCENT,
     };
     if (command.is_on) {
         command.has_brightness = true;
@@ -306,13 +357,14 @@ static void knob_listener(float percent, void *context)
     if (err != ESP_OK) ESP_LOGW(TAG, "Knob command dropped: %s", esp_err_to_name(err));
 }
 
-/** 尝试读取 ADC 缓存并建立旋钮基线，防止初始化时旋钮位置直接改变灯带。 */
+/** 尝试读取 ADC 缓存并建立旋钮基准，防止初始化时旋钮位置直接改变灯带。 */
 static void establish_knob_baseline(void)
 {
     float percent; /**< ADC 缓存的当前旋钮百分比，仅用于判断是否已有有效采样。 */
     if (adc_get_knob_percent(&percent) != ESP_OK) return;
 
     portENTER_CRITICAL(&s_state_lock);
+    s_knob_reference_percent = percent;
     s_knob_baselined = true;
     portEXIT_CRITICAL(&s_state_lock);
 }

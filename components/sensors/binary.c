@@ -50,9 +50,7 @@ static void update_fire_state(void)
     if (!changed) return;
 
     esp_err_t err = ha_discovery_publish_state_group(s_fire_state_group);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Kitchen fire sensor state publish request failed: %s", esp_err_to_name(err));
-    }
+    if (err != ESP_OK) ESP_LOGW(TAG, "Kitchen fire sensor state publish request failed: %s", esp_err_to_name(err));
 }
 
 static void fire_sensor_task(void *argument)

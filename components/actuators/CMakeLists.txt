@@ -2,11 +2,15 @@
 idf_component_register(
     SRCS
         "actuators.c"
+        "balcony_window.c"
         "living_room_light.c"
+        "output_switches.c"
     INCLUDE_DIRS
         "include"
     REQUIRES
         driver
+        esp_driver_gpio
+        esp_driver_ledc
         freertos
         ha_discovery
         ha_mqtt
