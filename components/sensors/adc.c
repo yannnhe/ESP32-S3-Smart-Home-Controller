@@ -149,6 +149,8 @@ static adc_oneshot_unit_handle_t s_adc_unit;
 static adc_cali_handle_t s_cali_handles[ADC_ATTEN_DB_12 + 1];
 static bool s_cali_ready[ADC_ATTEN_DB_12 + 1];
 static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
+static adc_knob_listener_t s_knob_listener;
+static void *s_knob_listener_context;
 static bool s_initialized;
 
 static float clampf(float value, float minimum, float maximum)
@@ -304,6 +306,17 @@ static void request_state_publish(adc_sensor_t *sensor, float value, bool valid)
     portEXIT_CRITICAL(&s_state_lock);
 }
 
+/** 在 ADC 采样任务中通知旋钮监听器；监听器只能快速投递自己的业务命令。 */
+static void notify_knob_listener(float percent)
+{
+    portENTER_CRITICAL(&s_state_lock);
+    adc_knob_listener_t listener = s_knob_listener;
+    void *context = s_knob_listener_context;
+    portEXIT_CRITICAL(&s_state_lock);
+
+    if (listener != NULL) listener(percent, context);
+}
+
 static void sample_sensor(adc_sensor_t *sensor)
 {
     int millivolts;
@@ -312,6 +325,7 @@ static void sample_sensor(adc_sensor_t *sensor)
     if (err == ESP_OK) err = convert_value(sensor->conversion, millivolts, &value);
 
     bool should_publish;
+    bool should_notify_knob_listener;
     bool valid = err == ESP_OK;
     portENTER_CRITICAL(&s_state_lock);
     if (valid) {
@@ -319,20 +333,20 @@ static void sample_sensor(adc_sensor_t *sensor)
         sensor->value = value;
         sensor->unavailable_reported = false;
         should_publish = !sensor->fast_sample || !sensor->has_published_value
-                         || fabsf(value - sensor->last_published_value)
-                                >= ADC_KNOB_PUBLISH_DEADBAND_PERCENT;
+                         || fabsf(value - sensor->last_published_value) >= ADC_KNOB_PUBLISH_DEADBAND_PERCENT;
+        should_notify_knob_listener = sensor->conversion == ADC_CONVERSION_KNOB_PERCENT && should_publish;
     } else {
         should_publish = !sensor->unavailable_reported;
+        should_notify_knob_listener = false;
         sensor->valid = false;
         sensor->unavailable_reported = true;
         sensor->has_published_value = false;
     }
     portEXIT_CRITICAL(&s_state_lock);
 
-    if (!valid) {
-        ESP_LOGW(TAG, "%s sample failed: %s", sensor->name, esp_err_to_name(err));
-    }
+    if (!valid) ESP_LOGW(TAG, "%s sample failed: %s", sensor->name, esp_err_to_name(err));
     if (should_publish) request_state_publish(sensor, value, valid);
+    if (should_notify_knob_listener) notify_knob_listener(value);
 }
 
 static void adc_fast_sampling_task(void *argument)
@@ -407,5 +421,35 @@ esp_err_t adc_init(void)
 
     s_initialized = true;
     ESP_LOGI(TAG, "ADC sensors initialized: 1 fast channel and 6 filtered slow channels");
+    return ESP_OK;
+}
+
+esp_err_t adc_register_knob_listener(adc_knob_listener_t listener, void *context)
+{
+    if (!s_initialized || listener == NULL) return ESP_ERR_INVALID_ARG;
+
+    portENTER_CRITICAL(&s_state_lock);
+    if (s_knob_listener != NULL) {
+        portEXIT_CRITICAL(&s_state_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_knob_listener = listener;
+    s_knob_listener_context = context;
+    portEXIT_CRITICAL(&s_state_lock);
+    return ESP_OK;
+}
+
+esp_err_t adc_get_knob_percent(float *percent)
+{
+    if (percent == NULL || !s_initialized) return ESP_ERR_INVALID_ARG;
+
+    const adc_sensor_t *knob = &s_adc_sensors[0];
+    portENTER_CRITICAL(&s_state_lock);
+    bool valid = knob->valid;
+    float value = knob->value;
+    portEXIT_CRITICAL(&s_state_lock);
+
+    if (!valid) return ESP_ERR_INVALID_STATE;
+    *percent = value;
     return ESP_OK;
 }

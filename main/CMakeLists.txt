@@ -9,6 +9,7 @@ idf_component_register(
     REQUIRES
         esp_event
         esp_netif
+        actuators
         diagnostics
         ha_discovery
         ha_mqtt

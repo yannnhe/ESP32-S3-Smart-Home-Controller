@@ -20,7 +20,8 @@
 #define HA_MQTT_PAYLOAD_ONLINE                "online"
 #define HA_MQTT_PAYLOAD_OFFLINE               "offline"
 
-#define HA_MQTT_QOS                           1
+#define HA_MQTT_QOS                            1
+#define HA_MQTT_MAX_COMMAND_HANDLERS           16
 
 /* "esp32-1-"、六位 MAC 字符串以及结尾 '\0'。 */
 #define HA_MQTT_CLIENT_ID_BUFFER_SIZE         16
@@ -48,6 +49,16 @@ static char s_client_id[HA_MQTT_CLIENT_ID_BUFFER_SIZE];
 static bool s_initialized;
 static bool s_started;
 static bool s_connected;
+
+/** 一个已注册命令主题及其只做快速投递的业务回调。 */
+typedef struct {
+    bool in_use;
+    const char *topic;
+    ha_mqtt_command_handler_t handler;
+    void *context;
+} command_handler_registration_t;
+
+static command_handler_registration_t s_command_handlers[HA_MQTT_MAX_COMMAND_HANDLERS];
 
 /**
  * @brief 比较 MQTT 回调中的非 '\0' 结尾字段与普通字符串。
@@ -98,6 +109,31 @@ static void publish_online(void)
     if (err != ESP_OK) ESP_LOGW(TAG, "Failed to publish availability: %s", esp_err_to_name(err));
 }
 
+/** 在 MQTT 建连后重新订阅所有业务命令主题。 */
+static void subscribe_registered_command_topics(esp_mqtt_client_handle_t client)
+{
+    for (size_t i = 0; i < HA_MQTT_MAX_COMMAND_HANDLERS; ++i) {
+        if (!s_command_handlers[i].in_use) continue;
+
+        int message_id = esp_mqtt_client_subscribe(client, s_command_handlers[i].topic, HA_MQTT_QOS);
+        if (message_id < 0) ESP_LOGE(TAG, "Failed to subscribe command topic '%s'", s_command_handlers[i].topic);
+        else ESP_LOGI(TAG, "Command topic subscribed: '%s' (msg_id=%d)", s_command_handlers[i].topic, message_id);
+    }
+}
+
+/** 将收到的业务命令分派给精确匹配的已注册处理器。 */
+static void dispatch_command(const esp_mqtt_event_handle_t event)
+{
+    for (size_t i = 0; i < HA_MQTT_MAX_COMMAND_HANDLERS; ++i) {
+        const command_handler_registration_t *registration = &s_command_handlers[i];
+        if (!registration->in_use || !mqtt_field_equals(event->topic, event->topic_len, registration->topic)) continue;
+
+        esp_err_t err = registration->handler(event->data, (size_t)event->data_len, registration->context);
+        if (err != ESP_OK) ESP_LOGW(TAG, "Command for '%s' was rejected: %s", registration->topic, esp_err_to_name(err));
+        return;
+    }
+}
+
 // 处理 Broker 下发的 MQTT 数据。
 // ESP-MQTT 可能把大载荷拆成多个 MQTT_EVENT_DATA。若未来接收大 JSON，应在此增加按 current_data_offset/total_data_len 组包的缓冲区
 static void handle_mqtt_data(const esp_mqtt_event_handle_t event)
@@ -117,7 +153,10 @@ static void handle_mqtt_data(const esp_mqtt_event_handle_t event)
          */
         publish_online();
         publish_component_event(HA_MQTT_EVENT_HOME_ASSISTANT_ONLINE, NULL, 0);
+        return;
     }
+
+    dispatch_command(event);
 }
 
 /**
@@ -144,6 +183,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t event_base, 
 
         if (ha_status_subscribe_id < 0) ESP_LOGE(TAG, "Failed to subscribe to Home Assistant status topic");
         else ESP_LOGI(TAG, "Home Assistant status topic subscribed (msg_id=%d)", ha_status_subscribe_id);
+
+        subscribe_registered_command_topics(event->client);
 
         /*
          * MQTT 首次连接或重连后先发布设备在线状态，再通知业务组件。
@@ -320,14 +361,44 @@ bool ha_mqtt_is_connected(void)
     return s_connected;
 }
 
+esp_err_t ha_mqtt_register_command_handler(const char *topic,
+                                            ha_mqtt_command_handler_t handler,
+                                            void *context)
+{
+    if (!s_initialized || topic == NULL || topic[0] == '\0' || handler == NULL) return ESP_ERR_INVALID_ARG;
+
+    // 检查是否已有相同topic的注册
+    for (size_t i = 0; i < HA_MQTT_MAX_COMMAND_HANDLERS; ++i) {
+        if (s_command_handlers[i].in_use && strcmp(s_command_handlers[i].topic, topic) == 0) {
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+
+    for (size_t i = 0; i < HA_MQTT_MAX_COMMAND_HANDLERS; ++i) {
+        if (!s_command_handlers[i].in_use) {
+            s_command_handlers[i] = (command_handler_registration_t) {
+                .in_use = true,
+                .topic = topic,
+                .handler = handler,
+                .context = context,
+            };
+
+            if (s_connected) {
+                int message_id = esp_mqtt_client_subscribe(s_mqtt_client, topic, HA_MQTT_QOS);
+                if (message_id < 0) return ESP_FAIL;
+            }
+            return ESP_OK;
+        }
+    }
+
+    return ESP_ERR_NO_MEM;
+}
+
 esp_err_t ha_mqtt_publish(const char *topic,
                           const char *payload,
                           int qos,
                           bool retain)
 {
-    if (topic == NULL || topic[0] == '\0'
-        || payload == NULL || (qos != 0 && qos != 1)) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    if (topic == NULL || topic[0] == '\0' || payload == NULL || (qos != 0 && qos != 1)) return ESP_ERR_INVALID_ARG;
     return publish_text(topic, payload, qos, retain);
 }

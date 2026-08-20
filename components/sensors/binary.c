@@ -107,8 +107,7 @@ esp_err_t binary_init(void)
     err = ha_discovery_register_binary_sensor(&entity_config, &ignored_entity);
     if (err != ESP_OK) return err;
 
-    if (xTaskCreate(fire_sensor_task, "fire_sensor", 3072, NULL,
-                    tskIDLE_PRIORITY + 1, &s_fire_task) != pdPASS) {
+    if (xTaskCreate(fire_sensor_task, "fire_sensor", 3072, NULL, tskIDLE_PRIORITY + 1, &s_fire_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
 
@@ -120,6 +119,6 @@ esp_err_t binary_init(void)
 
     update_fire_state();
     s_initialized = true;
-    ESP_LOGI(TAG, "Kitchen fire sensor initialized on GPIO37 (active low)");
+    ESP_LOGI(TAG, "Kitchen fire sensor initialized on GPIO18 (active low)");
     return ESP_OK;
 }

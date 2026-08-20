@@ -21,7 +21,7 @@
 | 12 | 卧室风扇 | 高电平开，上电安全关闭 |
 | 13 / 15 / 16 | 三个 DHT11 | 客厅/阳台/卧室 |
 | 14 | 客厅灯按键 | 去抖后切换灯带 |
-| 37 | 厨房火焰传感器 | 低有效，外部上拉，50 ms 去抖 |
+| 18 | 厨房火焰传感器 | 低有效，外部上拉，50 ms 去抖 |
 | 21 | 厨房风扇 | 高电平开，上电安全关闭 |
 | 38 | 厨房蜂鸣器 | 低有效，上电保持关闭 |
 | 48 | 阳台窗舵机 | 50 Hz PWM；最小/关闭/打开为 2.5%/7.5%/12.5% |
@@ -31,7 +31,8 @@
 - Wi-Fi STA、DHCP、自动重连、MQTT、LWT、availability 与 HA 状态订阅已完成。
 - 已完成三个 DHT11 和 Wi-Fi RSSI 的 MQTT Discovery、缓存与 retained 状态。
 - 已完成七路 ADC：GPIO1 亮度旋钮按 200 ms、5 点中值采样并以 1% 阈值发布；GPIO2、4、5、6、7、8 每 5 秒进行统一 5 点中值采样。ADC1 oneshot 使用曲线拟合校准，业务值沿用 YAML 的 MQ、UV、照度、雨滴和水位换算；不暴露原始电压，不直接控制灯带。
-- 已完成厨房火焰 Binary Sensor：GPIO37 低有效、外部上拉，双边沿中断仅通知任务，50 ms 去抖后发布 retained `ON`/`OFF` 状态；HA Discovery 使用 `binary_sensor` 域与 `safety` device class。
+- 已完成厨房火焰 Binary Sensor：GPIO18 低有效、外部上拉，双边沿中断仅通知任务，50 ms 去抖后发布 retained `ON`/`OFF` 状态；HA Discovery 使用 `binary_sensor` 域与 `safety` device class。
+- 已完成客厅 WS2812B MQTT Light：GPIO11、43 颗 GRB LED，支持 HA JSON 开关/亮度命令、GPIO14 高有效本地按键和 GPIO1 旋钮直接控灯。所有输入均先投递到灯带执行任务；实际刷新成功后才更新 retained 状态。
 - `ha_discovery` 专用任务统一发布 Discovery/状态；MQTT 连接或 HA 上线时重发全部 Discovery 与当前状态。
 - DHT 采样周期为 30 秒；RSSI 周期为 60 秒。
 
@@ -83,9 +84,9 @@ Discovery、状态与命令均需稳定命名、正确 device class/unit/state c
 | 阶段 | 目标 | 验收 |
 |---|---|---|
 | P0 | 核对开发板、接线、电平、电源与 GPIO 风险 | 风险项有明确结论 |
-| P1 | 验证既有网络、MQTT、DHT、ADC、火焰、RSSI | HA 自动发现正确，重连后状态完整恢复，ADC 量程和换算经实机核对 |
+| P1 | 验证既有网络、MQTT、DHT、ADC、火焰、灯带、RSSI | HA 自动发现正确，重连后状态完整恢复，ADC 量程和换算经实机核对 |
 | P2 | 强化 ADC 标定与传感器长稳测试 | 每路独立稳定，异常输入不崩溃 |
-| P3 | 迁移灯带、风扇、蜂鸣器与命令路由 | 命令、硬件状态和 HA 状态闭环一致 |
+| P3 | 迁移风扇、蜂鸣器与命令路由复用 | 命令、硬件状态和 HA 状态闭环一致 |
 | P4 | 迁移阳台窗舵机与 NVS | 动作安全、到位后停 PWM、重启恢复策略正确 |
 | P5 | OTA、持久化强化与长稳测试 | 升级/断网/掉电/异常输入可恢复 |
 

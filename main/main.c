@@ -5,6 +5,7 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
+#include "actuators.h"
 #include "diagnostics.h"
 #include "ha_discovery.h"
 #include "ha_mqtt.h"
@@ -142,6 +143,12 @@ void app_main(void)
     err = sensors_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Sensors initialization failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = actuators_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Actuators initialization failed: %s", esp_err_to_name(err));
         return;
     }
 

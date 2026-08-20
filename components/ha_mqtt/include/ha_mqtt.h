@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #include "esp_err.h"
 #include "esp_event.h"
@@ -36,6 +37,16 @@ typedef enum {
 } ha_mqtt_event_id_t;
 
 /**
+ * @brief MQTT 命令主题的非阻塞处理器。
+ *
+ * 回调运行在 ESP-MQTT 任务中，只能快速解析并投递命令；payload 不以 '\0' 结尾，
+ * 且只在回调返回前有效。
+ */
+typedef esp_err_t (*ha_mqtt_command_handler_t)(const char *payload,
+                                                size_t payload_length,
+                                                void *context);
+
+/**
  * @brief 初始化 Home Assistant MQTT 通信组件。
  *
  * 本函数会创建 ESP-MQTT 客户端，注册 MQTT 回调和 NETWORK_EVENT 监听器，
@@ -55,6 +66,16 @@ esp_err_t ha_mqtt_init(void);
  * @brief 查询当前是否已经连接到 MQTT Broker。
  */
 bool ha_mqtt_is_connected(void);
+
+/**
+ * @brief 注册一个精确匹配的 MQTT 命令主题处理器。
+ *
+ * topic 必须在应用生命周期内有效。组件初始化时注册的主题会在每次 MQTT 重连后
+ * 自动重新订阅；回调不得执行硬件操作或阻塞等待。
+ */
+esp_err_t ha_mqtt_register_command_handler(const char *topic,
+                                            ha_mqtt_command_handler_t handler,
+                                            void *context);
 
 /**
  * @brief 向指定主题发布一条文本消息。
