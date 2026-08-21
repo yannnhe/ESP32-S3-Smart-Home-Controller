@@ -133,6 +133,20 @@ static esp_err_t build_state_topic(ha_discovery_state_group_handle_t handle,
     return (written >= 0 && (size_t)written < state_topic_size) ? ESP_OK : ESP_ERR_INVALID_SIZE;
 }
 
+/** 根据状态组的 state_key 组装其独立 retained MQTT 可用性主题。 */
+static esp_err_t build_state_availability_topic(ha_discovery_state_group_handle_t handle,
+                                                char *availability_topic,
+                                                size_t availability_topic_size)
+{
+    if (!is_valid_state_group_handle(handle)) return ESP_ERR_NOT_FOUND;
+
+    const int written = snprintf(availability_topic, availability_topic_size,
+                                 "%s/%s/availability", MQTT_STATE_PREFIX,
+                                 s_state_groups[handle].config.state_key);
+    return (written >= 0 && (size_t)written < availability_topic_size)
+        ? ESP_OK : ESP_ERR_INVALID_SIZE;
+}
+
 /** 为数值 Sensor 生成 unique_id、Discovery topic 和关联状态 topic。 */
 static esp_err_t build_sensor_topics(const ha_discovery_sensor_config_t *config,
                                      char *discovery_topic, size_t discovery_topic_size,
@@ -225,6 +239,7 @@ static esp_err_t publish_sensor_discovery_now(ha_discovery_sensor_handle_t handl
     const ha_discovery_sensor_config_t *config = &s_sensors[handle].config;
     char discovery_topic[160];
     char state_topic[160];
+    char state_availability_topic[160];
     char unique_id[96];
     char value_template[256];
     char entity_category[96];
@@ -236,6 +251,10 @@ static esp_err_t publish_sensor_discovery_now(ha_discovery_sensor_handle_t handl
     esp_err_t err = build_sensor_topics(config, discovery_topic, sizeof(discovery_topic),
                                         state_topic, sizeof(state_topic), unique_id,
                                         sizeof(unique_id));
+    if (err != ESP_OK) return err;
+
+    err = build_state_availability_topic(config->state_group, state_availability_topic,
+                                         sizeof(state_availability_topic));
     if (err != ESP_OK) return err;
 
     if (config->value_template != NULL) {
@@ -264,9 +283,12 @@ static esp_err_t publish_sensor_discovery_now(ha_discovery_sensor_handle_t handl
 
     int written = snprintf(payload, sizeof(payload),
         "{\"name\":\"%s\",\"unique_id\":\"%s\",\"state_class\":\"measurement\"%s%s,"
-        "\"state_topic\":\"%s\"%s,\"availability_topic\":\"%s\"%s,\"device\":%s}",
+        "\"state_topic\":\"%s\"%s,\"availability\":[{\"topic\":\"%s\","
+        "\"payload_available\":\"online\",\"payload_not_available\":\"offline\"},"
+        "{\"topic\":\"%s\",\"payload_available\":\"online\","
+        "\"payload_not_available\":\"offline\"}],\"availability_mode\":\"all\"%s,\"device\":%s}",
         config->name, unique_id, device_class, unit_of_measurement, state_topic,
-        value_template, MQTT_AVAILABILITY_TOPIC, entity_category, device);
+        value_template, MQTT_AVAILABILITY_TOPIC, state_availability_topic, entity_category, device);
     if (written < 0 || (size_t)written >= sizeof(payload)) return ESP_ERR_INVALID_SIZE;
 
     err = publish_text(discovery_topic, payload);
@@ -284,6 +306,7 @@ static esp_err_t publish_binary_sensor_discovery_now(ha_discovery_binary_sensor_
     const ha_discovery_binary_sensor_config_t *config = &s_binary_sensors[handle].config;
     char discovery_topic[160];
     char state_topic[160];
+    char state_availability_topic[160];
     char unique_id[96];
     char device_class[96];
     char device[320];
@@ -292,6 +315,10 @@ static esp_err_t publish_binary_sensor_discovery_now(ha_discovery_binary_sensor_
     esp_err_t err = build_binary_sensor_topics(config, discovery_topic, sizeof(discovery_topic),
                                                state_topic, sizeof(state_topic), unique_id,
                                                sizeof(unique_id));
+    if (err != ESP_OK) return err;
+
+    err = build_state_availability_topic(config->state_group, state_availability_topic,
+                                         sizeof(state_availability_topic));
     if (err != ESP_OK) return err;
 
     if (config->device_class != NULL) {
@@ -307,8 +334,12 @@ static esp_err_t publish_binary_sensor_discovery_now(ha_discovery_binary_sensor_
 
     int written = snprintf(payload, sizeof(payload),
         "{\"name\":\"%s\",\"unique_id\":\"%s\"%s,\"state_topic\":\"%s\","
-        "\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"availability_topic\":\"%s\",\"device\":%s}",
-        config->name, unique_id, device_class, state_topic, MQTT_AVAILABILITY_TOPIC, device);
+        "\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"availability\":[{\"topic\":\"%s\","
+        "\"payload_available\":\"online\",\"payload_not_available\":\"offline\"},"
+        "{\"topic\":\"%s\",\"payload_available\":\"online\","
+        "\"payload_not_available\":\"offline\"}],\"availability_mode\":\"all\",\"device\":%s}",
+        config->name, unique_id, device_class, state_topic, MQTT_AVAILABILITY_TOPIC,
+        state_availability_topic, device);
     if (written < 0 || (size_t)written >= sizeof(payload)) return ESP_ERR_INVALID_SIZE;
 
     err = publish_text(discovery_topic, payload);
@@ -397,27 +428,39 @@ static esp_err_t publish_switch_discovery_now(ha_discovery_switch_handle_t handl
 
 /**
  * 仅由发布任务调用：读取业务组件缓存、编码状态并发布。
- * 编码器返回 ESP_ERR_INVALID_STATE 时统一发送 unavailable。
+ * 编码器返回 ESP_ERR_INVALID_STATE 时，将状态组的独立可用性发布为 offline。
  */
 static esp_err_t publish_state_group_now(ha_discovery_state_group_handle_t handle)
 {
     if (!is_valid_state_group_handle(handle)) return ESP_ERR_NOT_FOUND;
 
     char state_topic[160];
+    char state_availability_topic[160];
     char payload[192];
     esp_err_t err = build_state_topic(handle, state_topic, sizeof(state_topic));
+    if (err != ESP_OK) return err;
+    err = build_state_availability_topic(handle, state_availability_topic,
+                                         sizeof(state_availability_topic));
     if (err != ESP_OK) return err;
 
     const ha_discovery_state_group_config_t *config = &s_state_groups[handle].config;
     err = config->encode_payload(payload, sizeof(payload), config->context);
-    if (err == ESP_ERR_INVALID_STATE) snprintf(payload, sizeof(payload), "unavailable");
-    else if (err != ESP_OK) {
+    if (err == ESP_ERR_INVALID_STATE) {
+        err = publish_text(state_availability_topic, "offline");
+        log_publish_failure("state group availability", err);
+        return err;
+    }
+    if (err != ESP_OK) {
         ESP_LOGW(TAG, "State encoder for '%s' failed: %s", config->state_key, esp_err_to_name(err));
         return err;
     }
 
     err = publish_text(state_topic, payload);
     log_publish_failure("state group", err);
+    if (err != ESP_OK) return err;
+
+    err = publish_text(state_availability_topic, "online");
+    log_publish_failure("state group availability", err);
     return err;
 }
 

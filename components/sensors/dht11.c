@@ -48,16 +48,13 @@ static esp_err_t encode_dht11_state(char *payload, size_t payload_size, void *co
     int16_t humidity_tenths = sensor->humidity_tenths;
     portEXIT_CRITICAL(&s_state_lock);
 
-    if (!valid) {
-        int written = snprintf(payload, payload_size, "{\"available\":false}");
-        return written >= 0 && (size_t)written < payload_size ? ESP_OK : ESP_ERR_INVALID_SIZE;
-    }
+    if (!valid) return ESP_ERR_INVALID_STATE;
 
     int temperature_absolute_tenths = temperature_tenths < 0 ? -(int)temperature_tenths : temperature_tenths;
     const char *temperature_sign = temperature_tenths < 0 ? "-" : "";
     int humidity_rounded = (humidity_tenths + 5) / 10;
     int written = snprintf(payload, payload_size,
-                           "{\"available\":true,\"temperature\":%s%d.%d,\"humidity\":%d}",
+                           "{\"temperature\":%s%d.%d,\"humidity\":%d}",
                            temperature_sign, temperature_absolute_tenths / 10,
                            temperature_absolute_tenths % 10, humidity_rounded);
     return written >= 0 && (size_t)written < payload_size ? ESP_OK : ESP_ERR_INVALID_SIZE;
@@ -124,7 +121,7 @@ esp_err_t dht11_init(void)
             .device_class = "temperature",
             .unit_of_measurement = "\\u00b0C",
             .entity_category = NULL,
-            .value_template = "{{ value_json.temperature if value_json.available else 'unavailable' }}",
+            .value_template = "{{ value_json.temperature }}",
             .state_group = HA_DISCOVERY_INVALID_STATE_GROUP_HANDLE,
             .include_full_device_info = false,
         };
@@ -136,7 +133,7 @@ esp_err_t dht11_init(void)
             .device_class = "humidity",
             .unit_of_measurement = "%",
             .entity_category = NULL,
-            .value_template = "{{ value_json.humidity if value_json.available else 'unavailable' }}",
+            .value_template = "{{ value_json.humidity }}",
             .state_group = HA_DISCOVERY_INVALID_STATE_GROUP_HANDLE,
             .include_full_device_info = false,
         };

@@ -20,8 +20,9 @@ typedef size_t ha_discovery_state_group_handle_t;
 /**
  * @brief 多个实体共享的 MQTT 状态主题。
  *
- * state_key 会生成 smarthome/esp32-1/<state_key>/state。编码回调返回
- * ESP_ERR_INVALID_STATE 时，公共层发布字符串 unavailable；其他错误不会覆盖旧状态。
+ * state_key 会生成 smarthome/esp32-1/<state_key>/state 与
+ * smarthome/esp32-1/<state_key>/availability。编码回调返回
+ * ESP_ERR_INVALID_STATE 时，公共层将状态组可用性发布为 offline；其他错误不会覆盖旧状态。
  */
 typedef struct {
     const char *state_key;

@@ -18,6 +18,7 @@ sdkconfig.old
 
 # ESP-IDF Component Manager cache; dependencies.lock is committed instead.
 /managed_components/
+/example/
 /.idf/
 /components/.idf/
 /.espressif/
