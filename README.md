@@ -96,6 +96,15 @@ git status
 git diff --check
 ```
 
+## OTA（HTTP 固定源）
+
+- OTA 使用 `components/ota_service` 和双 OTA 槽分区表；首次改用该分区表烧录时会重建应用分区布局，`vfs` 中的旧数据可能被覆盖。
+- 固件下载地址只在 `menuconfig` 的 `OTA Service Configuration` 中配置，默认留空；服务只接受 host 为 `bin.bemfa.com` 的 `http://` 地址，MQTT 命令不能传入或覆盖 URL。不要将含令牌的 URL 提交到仓库或写入文档。
+- Home Assistant MQTT Discovery 会创建 `OTA Status` 诊断 Sensor 和 `Start OTA` Button。Button 发布精确的 `START` 到 `smarthome/esp32-1/ota/set`；下载期间 Button 会变为不可用，下载或校验失败时自动恢复。
+- 候选镜像必须为 ESP32-S3 镜像，且其内嵌的正整数版本必须高于当前运行版本；相同或更低版本会被拒绝。版本唯一来源是根目录 `CMakeLists.txt` 的 `set(PROJECT_VER "1")`：每次构建并上传巴法云固件前，手动递增它，例如 `1` 到 `2`。
+- `sdkconfig.defaults` 已为新配置启用 Bootloader 的 app rollback。已有 `sdkconfig` 的工程还需在 `menuconfig -> Bootloader config -> Application Rollback` 中确认 `Enable app rollback support` 已启用。
+- 新镜像重启后须在 120 秒内获得 IPv4、连接 Mosquitto MQTT，并完成一轮 HA Discovery/状态完整同步；否则会被标为无效并自动回滚。HTTP 下载不提供传输加密或来源身份验证，应只用于你信任的网络和固件托管源。
+
 ## 迁移说明
 
 原 ESPHome 功能盘点、GPIO 对照、Home Assistant 实体规划、ESP-IDF 组件设计和实施阶段计划，见：[ESPHome到ESP-IDF迁移需求与实施计划.md](ESPHome到ESP-IDF迁移需求与实施计划.md)。

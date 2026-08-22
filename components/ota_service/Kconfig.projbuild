@@ -1,0 +1,24 @@
+menu "OTA Service Configuration"
+
+    config OTA_SERVICE_FIRMWARE_URL
+        string "Fixed HTTP firmware URL"
+        default ""
+        help
+            固定的 HTTP 固件下载地址。仅接受 host 为 bin.bemfa.com 的 http:// URL。
+
+    config OTA_SERVICE_HTTP_TIMEOUT_MS
+        int "HTTP receive timeout (ms)"
+        default 15000
+        range 1000 120000
+        help
+            单次 HTTP 收发操作的最长等待时间。网络中断或超时会结束本次 OTA，按钮随后恢复可用。
+
+    config OTA_SERVICE_HEALTH_TIMEOUT_SECONDS
+        int "Post-update health confirmation timeout (seconds)"
+        default 120
+        range 30 600
+        help
+            新镜像启动后，必须在该时限内获得 IPv4、连接 Mosquitto MQTT 且完成一次 HA 完整同步；
+            否则镜像会标记为无效并自动回滚。
+
+endmenu

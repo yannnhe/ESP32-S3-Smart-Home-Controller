@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "esp_err.h"
+#include "esp_event.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +39,8 @@ typedef struct {
     const char *unit_of_measurement; /**< 可为 NULL，省略单位。 */
     const char *entity_category;
     const char *value_template;
+    /** NULL 使用 measurement；空字符串省略 state_class；其他值按原样发布。 */
+    const char *state_class;
     ha_discovery_state_group_handle_t state_group;
     bool include_full_device_info;
 } ha_discovery_sensor_config_t;
@@ -82,6 +85,24 @@ typedef struct {
 typedef size_t ha_discovery_switch_handle_t;
 #define HA_DISCOVERY_INVALID_SWITCH_HANDLE ((ha_discovery_switch_handle_t)-1)
 
+/** 一个引用已注册状态组的 Home Assistant MQTT Button 实体。 */
+typedef struct {
+    const char *entity_key;
+    const char *name;
+    const char *command_key; /**< 生成 smarthome/esp32-1/<command_key>/set。 */
+    ha_discovery_state_group_handle_t availability_state_group;
+    bool include_full_device_info;
+} ha_discovery_button_config_t;
+
+typedef size_t ha_discovery_button_handle_t;
+#define HA_DISCOVERY_INVALID_BUTTON_HANDLE ((ha_discovery_button_handle_t)-1)
+
+/** Discovery 完整同步结束事件；仅表示 Discovery 任务已提交全部注册内容。 */
+ESP_EVENT_DECLARE_BASE(HA_DISCOVERY_EVENT);
+typedef enum {
+    HA_DISCOVERY_EVENT_FULL_SYNC_COMPLETE = 0,
+} ha_discovery_event_id_t;
+
 /** @brief 初始化 Discovery 注册表、MQTT/HA 事件监听和专用发布任务。 */
 esp_err_t ha_discovery_init(void);
 
@@ -104,6 +125,10 @@ esp_err_t ha_discovery_register_light(const ha_discovery_light_config_t *config,
 /** @brief 注册一个引用已注册状态组的 MQTT Switch Discovery 实体。 */
 esp_err_t ha_discovery_register_switch(const ha_discovery_switch_config_t *config,
                                        ha_discovery_switch_handle_t *handle);
+
+/** @brief 注册一个 MQTT Button；可用性由 availability_state_group 控制。 */
+esp_err_t ha_discovery_register_button(const ha_discovery_button_config_t *config,
+                                       ha_discovery_button_handle_t *handle);
 
 /**
  * @brief 请求异步发布一个状态组的 retained 当前状态。

@@ -10,6 +10,7 @@
 #include "ha_discovery.h"
 #include "ha_mqtt.h"
 #include "network.h"
+#include "ota_service.h"
 #include "sensors.h"
 
 static const char *TAG = "main";
@@ -155,6 +156,13 @@ void app_main(void)
     err = diagnostics_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Diagnostics initialization failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    /* OTA 必须在 network_start() 前注册 MQTT 命令和健康检查事件，避免漏掉首次连接。 */
+    err = ota_service_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA service initialization failed: %s", esp_err_to_name(err));
         return;
     }
 

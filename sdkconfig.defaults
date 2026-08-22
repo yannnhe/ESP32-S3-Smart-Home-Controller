@@ -1,0 +1,2 @@
+# OTA 启动的新镜像必须能够进入 PENDING_VERIFY，才能由 ota_service 在健康检查失败时回滚。
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

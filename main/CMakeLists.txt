@@ -15,5 +15,6 @@ idf_component_register(
         ha_mqtt
         network
         nvs_flash
+        ota_service
         sensors
 )
